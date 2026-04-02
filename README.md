@@ -339,7 +339,7 @@ SECRET_KEY=change-this-to-a-long-random-string
 
 ## Workflow Guide
 
-Follow this sequence when using smartroll for the first time.
+
 
 ---
 
