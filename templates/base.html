@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
+  <title>{% block title %}smartroll{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static',filename='css/style.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+<!-- Mobile topbar -->
+<div class="topbar" id="topbar">
+  <div class="topbar-logo">
+    <div class="logo-mark"><span>CV</span></div>
+    <h1>smartroll</h1>
+  </div>
+  <button class="menu-btn" id="menu-btn" onclick="toggleMenu()" aria-label="Menu">
+    <span></span><span></span><span></span>
+  </button>
+</div>
+
+<!-- Sidebar overlay -->
+<div class="sidebar-overlay" id="overlay" onclick="closeMenu()"></div>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-mark"><span>CV</span></div>
+      <h1>smartroll</h1>
+      <p>College Attendance</p>
+    </div>
+    <nav class="sidebar-nav">
+      <span class="nav-label">Overview</span>
+      <a href="/dashboard" class="nav-link {% if request.path=='/dashboard' %}active{% endif %}" onclick="closeMenu()">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+        Dashboard
+      </a>
+      <span class="nav-label">Management</span>
+      <a href="/subjects" class="nav-link {% if request.path=='/subjects' %}active{% endif %}" onclick="closeMenu()">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h4"/></svg>
+        Subjects
+      </a>
+      <a href="/classes" class="nav-link {% if request.path=='/classes' %}active{% endif %}" onclick="closeMenu()">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="1.5"/><path d="M5 3V1M11 3V1M1 7h14"/></svg>
+        Classes
+      </a>
+      <a href="/attendance" class="nav-link {% if request.path=='/attendance' %}active{% endif %}" onclick="closeMenu()">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="11" rx="1.5"/><path d="M5 3V1M11 3V1M1 7h14"/><path d="M4.5 11l2 2 5-4"/></svg>
+        Take Attendance
+      </a>
+      <a href="/students" class="nav-link {% if request.path=='/students' %}active{% endif %}" onclick="closeMenu()">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2.5"/><path d="M1 13c0-2.5 2.2-4 5-4s5 1.5 5 4"/><circle cx="12" cy="5" r="2"/><path d="M14 12c0-1.5-1-2.5-2.5-3"/></svg>
+        Students
+      </a>
+      <a href="/register" class="nav-link {% if request.path=='/register' %}active{% endif %}" onclick="closeMenu()">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3 2.7-5 6-5s6 2 6 5"/><path d="M12 3v4M10 5h4"/></svg>
+        Register Student
+      </a>
+      <span class="nav-label">Records</span>
+      <a href="/admin" class="nav-link {% if request.path=='/admin' %}active{% endif %}" onclick="closeMenu()">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M2 6h12M6 6v8"/></svg>
+        Admin Panel
+      </a>
+      <span class="nav-label">End Session</span>
+       <a href="/logout"><button class="logout-btn">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3H3a1 1 0 00-1 1v8a1 1 0 001 1h3M10 11l3-3-3-3M13 8H6"/></svg>
+        Sign out
+      </button></a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="user-row">
+        <div class="user-avatar">{{ session.username[0].upper() if session.username else 'A' }}</div>
+        <div class="user-info">
+          <div class="name">{{ session.username or 'Admin' }}</div>
+          <div class="role">Administrator</div>
+        </div>
+      </div>
+     
+    </div>
+  </aside>
+
+  <main class="main">{% block content %}{% endblock %}</main>
+</div>
+
+<script>
+function toggleMenu(){
+  const s=document.getElementById('sidebar');
+  const o=document.getElementById('overlay');
+  const b=document.getElementById('menu-btn');
+  s.classList.toggle('open');
+  o.classList.toggle('open');
+  b.classList.toggle('open');
+}
+function closeMenu(){
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('overlay').classList.remove('open');
+  document.getElementById('menu-btn').classList.remove('open');
+}
+// Close on escape
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeMenu(); });
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

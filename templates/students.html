@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Students — smartroll{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div class="page-header-row">
+    <div><h2>Students</h2><p>All registered students</p></div>
+    <a href="/register" class="btn btn-primary">Register new</a>
+  </div>
+</div>
+<div class="page-body">
+  <div class="filter-row">
+    <input class="form-input" type="text" id="search" placeholder="Search name or enrollment..." oninput="loadStudents()">
+    <span id="stu-count" style="font-size:12px;color:var(--muted)"></span>
+    <span id="stu-msg"></span>
+  </div>
+
+  <!-- Desktop table -->
+  <div class="card hide-on-mobile">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Enrollment</th><th>Name</th><th>Course</th><th class="hide-mobile">Year</th><th class="hide-mobile">Section</th><th>Registered</th><th>Samples</th><th>Sessions</th><th style="text-align:right">Actions</th></tr></thead>
+        <tbody id="students-tbody"><tr><td colspan="9"><div class="empty-state"><p>Loading...</p></div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Mobile cards -->
+  <div id="students-mobile" class="mobile-card-list show-on-mobile"></div>
+</div>
+
+<div class="modal-backdrop" id="edit-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3>Edit student</h3>
+    <div class="form-group"><label class="form-label">Full name</label><input class="form-input" id="edit-name"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Course</label><input class="form-input" id="edit-course" placeholder="e.g. B.Tech CSE"></div>
+      <div class="form-group"><label class="form-label">Year</label>
+        <select class="form-input" id="edit-year"><option value="">—</option><option value="1">Year 1</option><option value="2">Year 2</option><option value="3">Year 3</option><option value="4">Year 4</option></select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">Section</label><input class="form-input" id="edit-section" placeholder="e.g. A"></div>
+    <input type="hidden" id="edit-enrollment">
+    <div id="edit-msg"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('edit-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveStudent()">Save changes</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="del-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3>Delete student?</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:8px" id="del-msg"></p>
+    <div class="alert alert-error" style="margin-bottom:0">Permanently deletes from MongoDB and removes all face images from Cloudinary.</div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('del-modal')">Cancel</button>
+      <button class="btn btn-danger" id="del-ok">Yes, delete</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<style>
+.hide-on-mobile{display:block}.show-on-mobile{display:none}
+@media(max-width:640px){.hide-on-mobile{display:none!important}.show-on-mobile{display:flex!important;flex-direction:column;gap:10px}}
+</style>
+<script>
+function loadStudents(){
+  const q=document.getElementById('search').value;
+  fetch(`/api/students?q=${encodeURIComponent(q)}`).then(r=>r.json()).then(data=>{
+    document.getElementById('stu-count').textContent=data.length+' student(s)';
+    const tbody=document.getElementById('students-tbody');
+    const mobile=document.getElementById('students-mobile');
+
+    if(!data.length){
+      tbody.innerHTML='<tr><td colspan="9"><div class="empty-state"><p>No students found. <a href="/register" style="color:var(--blue)">Register one</a></p></div></td></tr>';
+      mobile.innerHTML='<div class="empty-state"><p>No students found.</p></div>';
+      return;
+    }
+
+    tbody.innerHTML=data.map(s=>`
+      <tr id="row-${s.enrollmentNo}">
+        <td class="td-mono">${s.enrollmentNo}</td>
+        <td style="font-weight:500">${s.name}</td>
+        <td style="color:var(--muted)">${s.course||'—'}</td>
+        <td class="td-mono hide-mobile">${s.year?'Y'+s.year:'—'}</td>
+        <td class="hide-mobile">${s.section||'—'}</td>
+        <td style="font-size:12px;color:var(--muted)">${s.registeredAt||'—'}</td>
+        <td class="td-mono">${s.sampleCount||'—'}</td>
+        <td class="td-mono" id="sess-${s.enrollmentNo}">—</td>
+        <td class="td-actions">
+          <button class="btn btn-secondary btn-sm" onclick="openEdit('${s.enrollmentNo}','${esc(s.name)}','${esc(s.course||'')}','${s.year||''}','${esc(s.section||'')}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDelete('${s.enrollmentNo}','${esc(s.name)}')">Delete</button>
+        </td>
+      </tr>`).join('');
+
+    mobile.innerHTML=data.map(s=>`
+      <div class="mobile-record-card" id="mrow-${s.enrollmentNo}">
+        <div class="row"><span style="font-weight:500;font-size:14px">${s.name}</span><span class="td-mono" style="font-size:12px;color:var(--hint)">${s.enrollmentNo}</span></div>
+        <div class="row"><span class="label">Course</span><span>${s.course||'—'}${s.year?' · Y'+s.year:''}</span></div>
+        <div class="row"><span class="label">Registered</span><span style="font-size:12px;color:var(--muted)">${s.registeredAt||'—'}</span></div>
+        <div class="row"><span class="label">Sessions</span><span id="msess-${s.enrollmentNo}">—</span></div>
+        <div class="actions">
+          <button class="btn btn-secondary btn-sm" style="flex:1;justify-content:center" onclick="openEdit('${s.enrollmentNo}','${esc(s.name)}','${esc(s.course||'')}','${s.year||''}','${esc(s.section||'')}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDelete('${s.enrollmentNo}','${esc(s.name)}')">Delete</button>
+        </div>
+      </div>`).join('');
+
+    data.forEach(s=>{
+      fetch(`/api/attendance?enrollmentNo=${s.enrollmentNo}`).then(r=>r.json()).then(att=>{
+        const present=Array.isArray(att)?att.filter(a=>a.status==='present').length:0;
+        const total=Array.isArray(att)?att.length:0;
+        const badge=total>0?`<span class="badge ${present/total>=.75?'badge-green':present/total>=.5?'badge-amber':'badge-red'}">${present}/${total}</span>`:'<span class="badge badge-gray">0</span>';
+        const el=document.getElementById('sess-'+s.enrollmentNo); if(el) el.innerHTML=badge;
+        const mel=document.getElementById('msess-'+s.enrollmentNo); if(mel) mel.innerHTML=badge;
+      }).catch(()=>{});
+    });
+  });
+}
+
+function openEdit(enrollment,name,course,year,section){
+  document.getElementById('edit-enrollment').value=enrollment;
+  document.getElementById('edit-name').value=name;
+  document.getElementById('edit-course').value=course;
+  document.getElementById('edit-year').value=year;
+  document.getElementById('edit-section').value=section;
+  document.getElementById('edit-msg').innerHTML='';
+  openModal('edit-modal');
+}
+
+function saveStudent(){
+  const enrollment=document.getElementById('edit-enrollment').value;
+  const name=document.getElementById('edit-name').value.trim();
+  if(!name){document.getElementById('edit-msg').innerHTML='<div class="alert alert-error" style="margin-bottom:0">Name required.</div>';return;}
+  fetch(`/api/students/${enrollment}`,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,course:document.getElementById('edit-course').value,year:document.getElementById('edit-year').value,section:document.getElementById('edit-section').value})})
+    .then(r=>r.json()).then(d=>{if(d.success){closeModal('edit-modal');loadStudents();}else document.getElementById('edit-msg').innerHTML=`<div class="alert alert-error" style="margin-bottom:0">${d.message}</div>`;});
+}
+
+function confirmDelete(enrollment,name){
+  document.getElementById('del-msg').textContent=`You are about to delete ${name} (${enrollment}).`;
+  document.getElementById('del-ok').onclick=()=>deleteStudent(enrollment);
+  openModal('del-modal');
+}
+
+function deleteStudent(enrollment){
+  document.getElementById('del-ok').disabled=true;
+  document.getElementById('del-ok').innerHTML='<span class="spinner"></span> Deleting...';
+  fetch(`/api/students/${enrollment}`,{method:'DELETE'}).then(r=>r.json()).then(d=>{
+    closeModal('del-modal');
+    document.getElementById('del-ok').disabled=false;
+    document.getElementById('del-ok').innerHTML='Yes, delete';
+    if(d.success){showTopMsg('success',`Student ${enrollment} deleted.`);loadStudents();}
+    else showTopMsg('error',d.message||'Delete failed.');
+  });
+}
+
+function showTopMsg(type,text){
+  const el=document.getElementById('stu-msg');
+  el.innerHTML=`<div class="alert alert-${type==='error'?'error':'success'}" style="margin-bottom:0">${text}</div>`;
+  setTimeout(()=>el.innerHTML='',4000);
+}
+
+function esc(s){return s.replace(/'/g,"\\'").replace(/"/g,'&quot;');}
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+document.querySelectorAll('.modal-backdrop').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');}));
+loadStudents();
+</script>
+{% endblock %}

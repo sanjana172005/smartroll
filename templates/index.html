@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — smartroll{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div class="page-header-row">
+    <div><h2>Dashboard</h2><p>College attendance overview</p></div>
+    <span style="font-size:12px;color:var(--hint);font-family:var(--mono)">{{ today }}</span>
+  </div>
+</div>
+<div class="page-body">
+  {% if db_error %}
+  <div class="alert alert-error" style="margin-bottom:18px">
+    <strong>MongoDB error:</strong> {{ db_error }}<br>
+    <span style="font-size:12px">Check MONGODB_URI in .env and whitelist your IP in Atlas.</span>
+  </div>
+  {% endif %}
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Students</div>
+      <div class="stat-value">{{ stats.total_students }}</div>
+      <div class="stat-sub">registered</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Subjects</div>
+      <div class="stat-value">{{ stats.total_subjects }}</div>
+      <div class="stat-sub">in system</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Classes</div>
+      <div class="stat-value">{{ stats.total_classes }}</div>
+      <div class="stat-sub">total sessions</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Today</div>
+      <div class="stat-value">{{ stats.today_present }}</div>
+      <div class="stat-sub">present</div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-bottom:18px">
+
+    <!-- Recent classes -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Recent classes</span>
+        <a href="/classes" class="btn btn-secondary btn-sm">View all</a>
+      </div>
+      <div class="card-body" style="padding:0">
+        {% if recent_classes %}
+        <div style="padding:0 18px">
+          {% for c in recent_classes %}
+          <div class="class-item">
+            <div class="class-dot"></div>
+            <div class="class-info">
+              <div class="class-subject">{{ c.subject }}</div>
+              <div class="class-label">{{ c.label }}</div>
+            </div>
+            <a href="/attendance?class_id={{ c._id }}&subject={{ c.subject }}&class_label={{ c.label }}"
+               class="btn btn-success btn-sm">Take</a>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+          <p>No classes yet. <a href="/classes" style="color:var(--blue)">Create one</a></p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Recent attendance — class-wise -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Recent attendance</span>
+        <a href="/admin" class="btn btn-secondary btn-sm">View all</a>
+      </div>
+      <div class="card-body" style="padding:0">
+        {% if recent_att %}
+          {% set ns = namespace(seen=[]) %}
+          <div style="padding:0 18px">
+            {% for r in recent_att %}
+              {% if r.classLabel not in ns.seen and r.classLabel %}
+                {% set _ = ns.seen.append(r.classLabel) %}
+                <div class="class-item">
+                  <div class="class-dot"
+                    style="background:var(--blue)">
+                  </div>
+                  <div class="class-info">
+                    <div class="class-subject">{{ r.subject }}</div>
+                    <div class="class-label">{{ r.classLabel or r.date }}</div>
+                  </div>
+                  <a href="/admin" class="btn btn-secondary btn-sm">View</a>
+                </div>
+              {% elif r.classLabel not in ns.seen and not r.classLabel %}
+                {% set _ = ns.seen.append(r.date ~ r.subject) %}
+                <div class="class-item">
+                  <div class="class-dot" style="background:var(--blue)"></div>
+                  <div class="class-info">
+                    <div class="class-subject">{{ r.subject }}</div>
+                    <div class="class-label">{{ r.date }}</div>
+                  </div>
+                  <a href="/admin" class="btn btn-secondary btn-sm">View</a>
+                </div>
+              {% endif %}
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="empty-state"><p>No records yet</p></div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Quick actions</span></div>
+    <div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap">
+      <a href="/subjects" class="btn btn-secondary">Add subject</a>
+      <a href="/classes" class="btn btn-secondary">Schedule class</a>
+      <a href="/attendance" class="btn btn-secondary">Take attendance</a>
+      <a href="/register" class="btn btn-secondary">Register student</a>
+      <a href="/admin" class="btn btn-secondary">View records</a>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

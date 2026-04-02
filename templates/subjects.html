@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Subjects — smartroll{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div class="page-header-row">
+    <div><h2>Subjects</h2><p>Manage all college subjects</p></div>
+    <button class="btn btn-primary" onclick="openModal('add-modal')">Add subject</button>
+  </div>
+</div>
+<div class="page-body">
+  <div class="filter-row">
+    <input class="form-input" type="text" id="search" placeholder="Search subjects..." oninput="loadSubjects()">
+    <span id="sub-count" style="font-size:12px;color:var(--muted)"></span>
+  </div>
+  <div id="subjects-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px"></div>
+</div>
+
+<div class="modal-backdrop" id="add-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3>Add subject</h3>
+    <div class="form-group"><label class="form-label">Subject name *</label><input class="form-input" id="add-name" placeholder="e.g. Mathematics"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Code</label><input class="form-input" id="add-code" placeholder="e.g. MATH101"></div>
+      <div class="form-group"><label class="form-label">Description</label><input class="form-input" id="add-desc" placeholder="Optional"></div>
+    </div>
+    <div id="add-msg"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('add-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="addSubject()">Add subject</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="edit-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3>Edit subject</h3>
+    <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="edit-name"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Code</label><input class="form-input" id="edit-code"></div>
+      <div class="form-group"><label class="form-label">Description</label><input class="form-input" id="edit-desc"></div>
+    </div>
+    <input type="hidden" id="edit-id">
+    <div id="edit-msg"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('edit-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSubject()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="del-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3>Delete subject?</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:6px" id="del-msg"></p>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('del-modal')">Cancel</button>
+      <button class="btn btn-danger" id="del-ok">Delete</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function loadSubjects(){
+  fetch('/api/subjects').then(r=>r.json()).then(data=>{
+    const q=document.getElementById('search').value.toLowerCase();
+    const f=q?data.filter(s=>s.name.toLowerCase().includes(q)||(s.code||'').toLowerCase().includes(q)):data;
+    document.getElementById('sub-count').textContent=f.length+' subject(s)';
+    const g=document.getElementById('subjects-grid');
+    if(!f.length){g.innerHTML='<div style="grid-column:1/-1;padding:40px;text-align:center;color:var(--hint);font-size:13px">No subjects found.</div>';return;}
+    g.innerHTML=f.map(s=>`
+      <div class="subject-card">
+        <div class="subject-card-top">
+          <div><div class="subject-name">${s.name}</div>${s.code?`<div class="subject-code">${s.code}</div>`:''}</div>
+          <span class="badge badge-blue">Active</span>
+        </div>
+        ${s.description?`<div class="subject-desc">${s.description}</div>`:''}
+        <div class="subject-actions">
+          <a href="/classes?subject_id=${s._id}&subject=${encodeURIComponent(s.name)}" class="btn btn-secondary btn-sm">Classes</a>
+          <button class="btn btn-secondary btn-sm" onclick="openEdit('${s._id}','${esc(s.name)}','${esc(s.code||'')}','${esc(s.description||'')}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDel('${s._id}','${esc(s.name)}')">Delete</button>
+        </div>
+      </div>`).join('');
+  });
+}
+function esc(s){return s.replace(/'/g,"\\'").replace(/"/g,'&quot;')}
+function addSubject(){
+  const name=document.getElementById('add-name').value.trim();
+  if(!name){showMsg('add-msg','error','Name required.');return;}
+  fetch('/api/subjects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,code:document.getElementById('add-code').value.trim(),description:document.getElementById('add-desc').value.trim()})})
+    .then(r=>r.json()).then(d=>{if(d.success){closeModal('add-modal');clearForm(['add-name','add-code','add-desc']);loadSubjects();}else showMsg('add-msg','error',d.message);});
+}
+function openEdit(id,name,code,desc){
+  document.getElementById('edit-id').value=id;document.getElementById('edit-name').value=name;
+  document.getElementById('edit-code').value=code;document.getElementById('edit-desc').value=desc;
+  document.getElementById('edit-msg').innerHTML='';openModal('edit-modal');
+}
+function saveSubject(){
+  const id=document.getElementById('edit-id').value;
+  fetch(`/api/subjects/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('edit-name').value,code:document.getElementById('edit-code').value,description:document.getElementById('edit-desc').value})})
+    .then(r=>r.json()).then(d=>{if(d.success){closeModal('edit-modal');loadSubjects();}else showMsg('edit-msg','error',d.message);});
+}
+function confirmDel(id,name){
+  document.getElementById('del-msg').textContent=`Delete "${name}"? This cannot be undone.`;
+  document.getElementById('del-ok').onclick=()=>fetch(`/api/subjects/${id}`,{method:'DELETE'}).then(()=>{closeModal('del-modal');loadSubjects();});
+  openModal('del-modal');
+}
+function clearForm(ids){ids.forEach(id=>{document.getElementById(id).value=''});}
+function showMsg(id,t,text){document.getElementById(id).innerHTML=`<div class="alert alert-${t==='error'?'error':'success'}" style="margin-bottom:0">${text}</div>`;}
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+document.querySelectorAll('.modal-backdrop').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');}));
+loadSubjects();
+</script>
+{% endblock %}

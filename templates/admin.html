@@ -1,0 +1,466 @@
+{% extends "base.html" %}
+{% block title %}Admin Panel — smartroll{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>Admin panel</h2>
+  <p>Students, attendance records, statistics and export</p>
+</div>
+<div class="page-body">
+  <div class="tab-nav">
+    <button class="tab-btn active" onclick="switchTab('students',this)">Students</button>
+    <button class="tab-btn" onclick="switchTab('attendance',this)">Attendance</button>
+    <button class="tab-btn" onclick="switchTab('stats',this)">Statistics</button>
+  </div>
+
+  <!-- Students tab -->
+  <div id="tab-students">
+    <div class="filter-row">
+      <input class="form-input" type="text" id="stu-search" placeholder="Search..." oninput="loadStudents()">
+      <span id="stu-count" style="font-size:12px;color:var(--muted)"></span>
+    </div>
+    <div class="card hide-on-mobile">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Enrollment</th><th>Name</th><th>Course</th><th>Registered</th><th>Samples</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody id="stu-tbody"><tr><td colspan="6"><div class="empty-state"><p>Loading...</p></div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="stu-mobile" class="mobile-card-list show-on-mobile"></div>
+  </div>
+
+  <!-- Attendance tab -->
+  <div id="tab-attendance" style="display:none">
+    <div class="filter-row">
+      <select class="form-input" id="att-subject"><option value="">All subjects</option></select>
+      <input class="form-input" type="date" id="att-date">
+      <select class="form-input" id="att-status">
+        <option value="">All statuses</option>
+        <option value="present">Present</option>
+        <option value="absent">Absent</option>
+      </select>
+      <button class="btn btn-secondary btn-sm" onclick="loadAttendance()">Filter</button>
+      <button class="btn btn-secondary btn-sm" onclick="clearAttFilters()">Clear</button>
+      <button class="btn btn-success btn-sm" onclick="exportCSV()">Export CSV</button>
+      <span id="att-count" style="font-size:12px;color:var(--muted)"></span>
+    </div>
+    <div id="att-classes-list" style="display:flex;flex-direction:column;gap:12px"></div>
+  </div>
+
+  <!-- Stats tab -->
+  <div id="tab-stats" style="display:none">
+    <div class="grid-2" style="margin-bottom:18px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">7-day trend</span></div>
+        <div class="card-body"><canvas id="trend-chart" style="width:100%;height:110px"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">By subject</span></div>
+        <div class="card-body" id="subject-bars"><div style="text-align:center;color:var(--hint);font-size:13px">Loading...</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">Student attendance %</span></div>
+      <div class="card-body" id="student-bars"><div style="text-align:center;color:var(--hint);font-size:13px">Loading...</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Edit student modal -->
+<div class="modal-backdrop" id="edit-stu-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3>Edit student</h3>
+    <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="es-name"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Course</label><input class="form-input" id="es-course"></div>
+      <div class="form-group"><label class="form-label">Year</label><input class="form-input" id="es-year"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Section</label><input class="form-input" id="es-section"></div>
+    <input type="hidden" id="es-enrollment">
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('edit-stu-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveStudent()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit attendance modal -->
+<div class="modal-backdrop" id="edit-att-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3>Edit attendance</h3>
+    <div class="form-group"><label class="form-label">Status</label>
+      <select class="form-input" id="ea-status">
+        <option value="present">Present</option>
+        <option value="absent">Absent</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Subject</label><input class="form-input" id="ea-subject"></div>
+    <input type="hidden" id="ea-id">
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('edit-att-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAttendance()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm delete modal -->
+<div class="modal-backdrop" id="del-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3 id="del-title">Delete?</h3>
+    <p style="font-size:13px;color:var(--muted)" id="del-msg"></p>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('del-modal')">Cancel</button>
+      <button class="btn btn-danger" id="del-ok">Delete</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.hide-on-mobile{display:block}.show-on-mobile{display:none}
+@media(max-width:640px){.hide-on-mobile{display:none!important}.show-on-mobile{display:flex!important;flex-direction:column;gap:10px}}
+</style>
+<script>
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function switchTab(name, btn) {
+  document.querySelectorAll('[id^=tab-]').forEach(p => p.style.display = 'none');
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).style.display = 'block';
+  btn.classList.add('active');
+  if (name === 'students')   loadStudents();
+  if (name === 'attendance') { loadAttSubjects(); loadAttendance(); }
+  if (name === 'stats')      loadStats();
+}
+
+// ── Students ──────────────────────────────────────────────────────────────────
+function loadStudents() {
+  const q = document.getElementById('stu-search').value;
+  fetch(`/api/students?q=${encodeURIComponent(q)}`).then(r => r.json()).then(data => {
+    document.getElementById('stu-count').textContent = data.length + ' student(s)';
+    const tbody  = document.getElementById('stu-tbody');
+    const mobile = document.getElementById('stu-mobile');
+
+    if (!data.length) {
+      tbody.innerHTML  = '<tr><td colspan="6"><div class="empty-state"><p>No students found</p></div></td></tr>';
+      mobile.innerHTML = '<div class="empty-state"><p>No students found</p></div>';
+      return;
+    }
+
+    tbody.innerHTML = data.map(s => `
+      <tr>
+        <td class="td-mono">${s.enrollmentNo}</td>
+        <td>
+          <div style="font-weight:500">${s.name}</div>
+          ${s.course ? `<div style="font-size:11px;color:var(--hint)">${s.course}</div>` : ''}
+        </td>
+        <td style="color:var(--muted)">${s.course || '—'}</td>
+        <td style="font-size:12px;color:var(--muted)">${s.registeredAt || '—'}</td>
+        <td class="td-mono">${s.sampleCount || '—'}</td>
+        <td class="td-actions">
+          <button class="btn btn-secondary btn-sm" onclick="openEditStudent('${s.enrollmentNo}','${esc(s.name)}','${esc(s.course||'')}','${s.year||''}','${esc(s.section||'')}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDel('student','${s.enrollmentNo}','${esc(s.name)}')">Delete</button>
+        </td>
+      </tr>`).join('');
+
+    mobile.innerHTML = data.map(s => `
+      <div class="mobile-record-card">
+        <div class="row"><span style="font-weight:500">${s.name}</span><span class="td-mono" style="font-size:12px;color:var(--hint)">${s.enrollmentNo}</span></div>
+        <div class="row"><span class="label">Course</span><span>${s.course || '—'}</span></div>
+        <div class="actions">
+          <button class="btn btn-secondary btn-sm" style="flex:1;justify-content:center" onclick="openEditStudent('${s.enrollmentNo}','${esc(s.name)}','${esc(s.course||'')}','${s.year||''}','${esc(s.section||'')}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDel('student','${s.enrollmentNo}','${esc(s.name)}')">Delete</button>
+        </div>
+      </div>`).join('');
+  });
+}
+
+function openEditStudent(enrollment, name, course, year, section) {
+  document.getElementById('es-enrollment').value = enrollment;
+  document.getElementById('es-name').value        = name;
+  document.getElementById('es-course').value      = course;
+  document.getElementById('es-year').value        = year;
+  document.getElementById('es-section').value     = section;
+  openModal('edit-stu-modal');
+}
+
+function saveStudent() {
+  const enrollment = document.getElementById('es-enrollment').value;
+  fetch(`/api/students/${enrollment}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name:    document.getElementById('es-name').value,
+      course:  document.getElementById('es-course').value,
+      year:    document.getElementById('es-year').value,
+      section: document.getElementById('es-section').value,
+    })
+  }).then(() => { closeModal('edit-stu-modal'); loadStudents(); });
+}
+
+// ── Attendance (class-wise grouped) ───────────────────────────────────────────
+function loadAttSubjects() {
+  fetch('/api/subjects').then(r => r.json()).then(subs => {
+    const sel = document.getElementById('att-subject');
+    if (sel.options.length <= 1)
+      subs.forEach(s => sel.innerHTML += `<option value="${s.name}">${s.name}</option>`);
+  });
+}
+
+function loadAttendance() {
+  const subject = document.getElementById('att-subject').value;
+  const date    = document.getElementById('att-date').value;
+  const status  = document.getElementById('att-status').value;
+
+  fetch(`/api/attendance?subject=${encodeURIComponent(subject)}&date=${date}&status=${status}`)
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('att-count').textContent = data.length + ' record(s)';
+      const container = document.getElementById('att-classes-list');
+
+      if (!data.length) {
+        container.innerHTML = '<div class="empty-state"><p>No records found</p></div>';
+        return;
+      }
+
+      // Group records by classId (fall back to date if no classId)
+      const groups = {};
+      data.forEach(r => {
+        const key = r.classId || ('date-' + r.date + '-' + r.subject);
+        if (!groups[key]) {
+          groups[key] = {
+            classId:    r.classId || '',
+            classLabel: r.classLabel || r.date,
+            subject:    r.subject,
+            date:       r.date,
+            present:    [],
+            absent:     [],
+          };
+        }
+        if (r.status === 'present') groups[key].present.push(r);
+        else                        groups[key].absent.push(r);
+      });
+
+      // Sort groups by date descending
+      const sorted = Object.values(groups).sort((a, b) => b.date.localeCompare(a.date));
+
+      container.innerHTML = sorted.map(g => {
+        const pCount = g.present.length;
+        const aCount = g.absent.length;
+        const total  = pCount + aCount;
+        const pct    = total > 0 ? Math.round(pCount / total * 100) : 0;
+        const gid    = 'grp-' + (g.classId || (g.date + g.subject)).replace(/[^a-z0-9]/gi, '');
+
+        const presentRows = g.present.map(r => `
+          <tr>
+            <td>
+              <div style="font-weight:500">${r.name}</div>
+              <div class="td-mono" style="color:var(--hint)">${r.enrollmentNo}</div>
+            </td>
+            <td><span class="badge badge-green">present</span></td>
+            <td class="td-mono" style="color:var(--muted)">${r.time || '—'}</td>
+            <td><span class="badge badge-gray">${r.method || 'face'}</span></td>
+            <td class="td-actions">
+              <button class="btn btn-secondary btn-sm" onclick="openEditAtt('${r._id}','${r.status}','${esc(r.subject)}')">Edit</button>
+              <button class="btn btn-danger btn-sm" onclick="confirmDel('attendance','${r._id}','record')">Delete</button>
+            </td>
+          </tr>`).join('');
+
+        const absentRows = g.absent.map(r => `
+          <tr>
+            <td>
+              <div style="font-weight:500">${r.name}</div>
+              <div class="td-mono" style="color:var(--hint)">${r.enrollmentNo}</div>
+            </td>
+            <td><span class="badge badge-red">absent</span></td>
+            <td class="td-mono" style="color:var(--muted)">—</td>
+            <td><span class="badge badge-gray">${r.method || 'manual'}</span></td>
+            <td class="td-actions">
+              <button class="btn btn-secondary btn-sm" onclick="openEditAtt('${r._id}','${r.status}','${esc(r.subject)}')">Edit</button>
+              <button class="btn btn-danger btn-sm" onclick="confirmDel('attendance','${r._id}','record')">Delete</button>
+            </td>
+          </tr>`).join('');
+
+        const pctColor = pct >= 75 ? 'badge-green' : pct >= 50 ? 'badge-amber' : 'badge-red';
+
+        return `
+          <div class="card">
+            <div class="card-header" style="cursor:pointer" onclick="toggleGroup('${gid}')">
+              <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+                <div style="font-weight:600;font-size:14px">${g.subject}</div>
+                <div class="td-mono" style="font-size:12px;color:var(--muted)">${g.classLabel}</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
+                <span class="badge badge-green">${pCount} present</span>
+                <span class="badge badge-red">${aCount} absent</span>
+                <span class="badge ${pctColor}">${pct}%</span>
+                <button class="btn btn-success btn-sm" onclick="event.stopPropagation();window.location.href='/api/export?class_id=${g.classId}'">Export</button>
+                <svg id="arrow-${gid}" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="transition:transform .2s;flex-shrink:0"><path d="M4 6l4 4 4-4"/></svg>
+              </div>
+            </div>
+            <div id="${gid}" style="display:none">
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Student</th>
+                      <th>Status</th>
+                      <th>Time</th>
+                      <th>Method</th>
+                      <th style="text-align:right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${presentRows}
+                    ${absentRows}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    });
+}
+
+function toggleGroup(id) {
+  const el    = document.getElementById(id);
+  const arrow = document.getElementById('arrow-' + id);
+  const open  = el.style.display === 'block';
+  el.style.display      = open ? 'none' : 'block';
+  arrow.style.transform = open ? '' : 'rotate(180deg)';
+}
+
+function clearAttFilters() {
+  document.getElementById('att-subject').value = '';
+  document.getElementById('att-date').value    = '';
+  document.getElementById('att-status').value  = '';
+  loadAttendance();
+}
+
+function exportCSV() {
+  const subject = document.getElementById('att-subject').value;
+  const date    = document.getElementById('att-date').value;
+  const status  = document.getElementById('att-status').value;
+  window.location.href = `/api/export?subject=${encodeURIComponent(subject)}&date=${date}&status=${status}`;
+}
+
+function openEditAtt(id, status, subject) {
+  document.getElementById('ea-id').value      = id;
+  document.getElementById('ea-status').value  = status;
+  document.getElementById('ea-subject').value = subject;
+  openModal('edit-att-modal');
+}
+
+function saveAttendance() {
+  const id = document.getElementById('ea-id').value;
+  fetch(`/api/attendance/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      status:  document.getElementById('ea-status').value,
+      subject: document.getElementById('ea-subject').value,
+    })
+  }).then(() => { closeModal('edit-att-modal'); loadAttendance(); });
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function loadStats() {
+  fetch('/api/stats').then(r => r.json()).then(data => {
+    drawTrend(data.trend || []);
+    drawSubjectBars(data.by_subject || []);
+    drawStudentBars(data.student_stats || []);
+  });
+}
+
+function drawTrend(trend) {
+  const canvas = document.getElementById('trend-chart');
+  const ctx    = canvas.getContext('2d');
+  const W      = canvas.offsetWidth || 300;
+  const H      = 110;
+  canvas.width  = W * devicePixelRatio;
+  canvas.height = H * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  const max  = Math.max(...trend.map(d => d.count), 1);
+  const pad  = 28;
+  const dark = matchMedia('(prefers-color-scheme:dark)').matches;
+  const lc   = dark ? '#fff' : '#1A1916';
+  const gc   = dark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.05)';
+  ctx.clearRect(0, 0, W, H);
+  [0, .5, 1].forEach(f => {
+    const y = H - pad - f * (H - pad * 2);
+    ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - pad, y);
+    ctx.strokeStyle = gc; ctx.lineWidth = 1; ctx.stroke();
+  });
+  const pts = trend.map((d, i) => ({
+    x: pad + (i / (trend.length - 1)) * (W - pad * 2),
+    y: H - pad - (d.count / max) * (H - pad * 2),
+    count: d.count, date: d.date,
+  }));
+  ctx.beginPath();
+  pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+  ctx.strokeStyle = lc; ctx.lineWidth = 1.5; ctx.stroke();
+  pts.forEach(p => {
+    ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fillStyle = lc; ctx.fill();
+    ctx.font = '10px DM Mono,monospace';
+    ctx.fillStyle = dark ? 'rgba(255,255,255,.4)' : 'rgba(0,0,0,.4)';
+    ctx.textAlign = 'center';
+    ctx.fillText(p.date, p.x, H - 6);
+    if (p.count > 0) { ctx.fillStyle = lc; ctx.fillText(p.count, p.x, p.y - 8); }
+  });
+}
+
+function drawSubjectBars(subjects) {
+  const max = Math.max(...subjects.map(s => s.total), 1);
+  document.getElementById('subject-bars').innerHTML = subjects.length
+    ? subjects.map(s => `
+        <div class="chart-bar-row">
+          <div class="chart-bar-label">${s.subject}</div>
+          <div class="chart-bar-track"><div class="chart-bar-fill green" style="width:${Math.round(s.present / max * 100)}%"></div></div>
+          <div class="chart-bar-count">${s.present}/${s.total}</div>
+        </div>`).join('')
+    : '<p style="color:var(--hint);font-size:12px;text-align:center">No data yet</p>';
+}
+
+function drawStudentBars(students) {
+  document.getElementById('student-bars').innerHTML = students.length
+    ? students.map(s => `
+        <div class="chart-bar-row">
+          <div class="chart-bar-label">${s.name}</div>
+          <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${s.pct}%"></div></div>
+          <div class="chart-bar-count">${s.pct}%</div>
+        </div>`).join('')
+    : '<p style="color:var(--hint);font-size:12px;text-align:center">No data yet</p>';
+}
+
+// ── Delete confirm ─────────────────────────────────────────────────────────────
+function confirmDel(type, id, name) {
+  document.getElementById('del-title').textContent = type === 'student' ? 'Delete student?' : 'Delete record?';
+  document.getElementById('del-msg').textContent   = type === 'student'
+    ? `Remove ${name} (${id})? Face images will be deleted from Cloudinary.`
+    : 'Remove this attendance record permanently.';
+  document.getElementById('del-ok').onclick = () => {
+    const url = type === 'student' ? `/api/students/${id}` : `/api/attendance/${id}`;
+    fetch(url, { method: 'DELETE' }).then(() => {
+      closeModal('del-modal');
+      type === 'student' ? loadStudents() : loadAttendance();
+    });
+  };
+  openModal('del-modal');
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function esc(s)        { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id){ document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-backdrop').forEach(m =>
+  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); })
+);
+
+loadStudents();
+</script>
+{% endblock %}

@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}Register Student — smartroll{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>Register student</h2>
+  <p>Capture 50 face samples to register a new student</p>
+</div>
+<div class="page-body">
+  <div class="grid-2">
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Student details</span></div>
+        <div class="card-body">
+          <div class="form-group"><label class="form-label">Enrollment number</label><input class="form-input" type="text" id="enrollment" placeholder="e.g. 2021001" maxlength="20"></div>
+          <div class="form-group"><label class="form-label">Full name</label><input class="form-input" type="text" id="name" placeholder="e.g. Ravi Kumar"></div>
+          <div class="form-group"><label class="form-label">Course</label><input class="form-input" type="text" id="course" placeholder="e.g. B.Tech CSE"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+            <div class="form-group" style="margin-bottom:0"><label class="form-label">Year</label><input class="form-input" type="text" id="year" placeholder="e.g. 3"></div>
+            <div class="form-group" style="margin-bottom:0"><label class="form-label">Section</label><input class="form-input" type="text" id="section" placeholder="e.g. A"></div>
+          </div>
+          <div id="msg-box"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Camera controls</span></div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:8px">
+          <button class="btn btn-primary btn-lg btn-full" id="start-btn" onclick="startCapture()">Start capture</button>
+          <button class="btn btn-danger btn-lg btn-full" id="stop-btn" onclick="stopCapture()" style="display:none">Stop camera</button>
+        </div>
+      </div>
+      <div class="card" id="progress-card" style="display:none">
+        <div class="card-header">
+          <span class="card-title" id="progress-title">Capture progress</span>
+          <span class="badge badge-blue" id="prog-badge">0 / 50</span>
+        </div>
+        <div class="card-body">
+          <div class="progress-wrap" style="height:8px;margin-bottom:8px"><div class="progress-fill" id="progress-bar" style="width:0%"></div></div>
+          <p style="font-size:12px;color:var(--hint)" id="progress-hint">Keep your face centred and well-lit.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Train recognition model</span></div>
+        <div class="card-body">
+          <p style="font-size:13px;color:var(--muted);margin-bottom:12px">After registering all students and upload completes, train the LBPH model.</p>
+          <div id="train-msg"></div>
+          <button class="btn btn-secondary btn-full" id="train-btn" onclick="trainModel()">Train model</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Camera feed</span></div>
+        <div class="card-body" style="padding:0">
+          <div id="cam-placeholder" class="cam-placeholder">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="#444" stroke-width="1.5"><rect x="4" y="10" width="32" height="22" rx="3"/><circle cx="20" cy="21" r="6"/><path d="M14 10V8a2 2 0 012-2h8a2 2 0 012 2v2"/></svg>
+            <p>Camera not started</p>
+            <p style="color:#444;font-size:12px">Fill in details and click Start</p>
+          </div>
+          <!-- Hidden elements for browser webcam capture -->
+          <video id="raw-video" style="display:none" autoplay playsinline muted></video>
+          <canvas id="raw-canvas" style="display:none"></canvas>
+          <div id="cam-feed-wrap" style="display:none;position:relative">
+            <img id="cam-feed" style="width:100%;display:block;border-radius:0 0 var(--rl) var(--rl)" src="" alt="Camera feed">
+            <div style="position:absolute;bottom:0;left:0;right:0;padding:10px 14px;background:rgba(0,0,0,.5);display:flex;align-items:center;gap:8px;border-radius:0 0 var(--rl) var(--rl)">
+              <div class="pulse-dot"></div>
+              <span style="color:white;font-size:12px;font-family:var(--mono)" id="feed-status">Detecting face...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Recent registrations</span>
+          <button class="btn btn-secondary btn-sm" onclick="loadRecentStudents()">Refresh</button>
+        </div>
+        <div id="recent-students"><div style="padding:20px;text-align:center;color:var(--hint);font-size:13px">Loading...</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let frameInterval = null;
+let pollInterval  = null;
+let stream        = null;
+let capturing     = false;
+
+function showMsg(id, success, text) {
+  document.getElementById(id).innerHTML =
+    `<div class="alert alert-${success ? 'success' : 'error'}" style="margin-bottom:0">${text}</div>`;
+}
+
+async function startCapture() {
+  const enrollment = document.getElementById('enrollment').value.trim();
+  const name       = document.getElementById('name').value.trim();
+  const course     = document.getElementById('course').value.trim();
+  const year       = document.getElementById('year').value.trim();
+  const section    = document.getElementById('section').value.trim();
+
+  if (!enrollment) { showMsg('msg-box', false, 'Please enter enrollment number.'); return; }
+  if (!name)       { showMsg('msg-box', false, 'Please enter student name.'); return; }
+  if (!course)     { showMsg('msg-box', false, 'Please enter course.'); return; }
+  if (!year)       { showMsg('msg-box', false, 'Please enter year.'); return; }
+  if (!section)    { showMsg('msg-box', false, 'Please enter section.'); return; }
+
+  // Initialise capture session on server
+  const init = await fetch('/api/start_capture', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({enrollment, name, course, year, section})
+  }).then(r => r.json()).catch(() => ({success: false, message: 'Network error'}));
+
+  if (!init.success) { showMsg('msg-box', false, init.message || 'Could not start.'); return; }
+
+  // Open browser webcam (HTTPS required in production — Render provides this)
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'user'}});
+  } catch(e) {
+    showMsg('msg-box', false, 'Camera access denied. Please allow camera access in your browser settings.');
+    return;
+  }
+
+  const video = document.getElementById('raw-video');
+  video.srcObject = stream;
+  await video.play();
+
+  // UI updates
+  document.getElementById('msg-box').innerHTML           = '';
+  document.getElementById('train-msg').innerHTML         = '';
+  document.getElementById('start-btn').style.display     = 'none';
+  document.getElementById('stop-btn').style.display      = 'flex';
+  document.getElementById('progress-card').style.display = 'block';
+  document.getElementById('train-btn').disabled          = true;
+  document.getElementById('train-btn').innerHTML         = 'Wait for upload...';
+  document.getElementById('cam-placeholder').style.display = 'none';
+  document.getElementById('cam-feed-wrap').style.display   = 'block';
+
+  capturing = true;
+
+  // Send a frame every 300ms to server for face detection
+  frameInterval = setInterval(sendFrame, 300);
+  // Poll server for upload progress
+  pollInterval  = setInterval(pollCaptureStatus, 900);
+}
+
+function sendFrame() {
+  if (!capturing) return;
+  const video  = document.getElementById('raw-video');
+  const canvas = document.getElementById('raw-canvas');
+  if (!video.videoWidth) return;
+
+  canvas.width  = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+
+  const frameB64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+  fetch('/api/process_frame', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({frame: frameB64})
+  }).then(r => r.json()).then(data => {
+    // Show annotated frame returned from server
+    if (data.frame) {
+      document.getElementById('cam-feed').src = 'data:image/jpeg;base64,' + data.frame;
+    }
+    const progress = data.progress || 0;
+    const pct      = Math.round((progress / 50) * 100);
+    document.getElementById('progress-bar').style.width = pct + '%';
+    document.getElementById('prog-badge').textContent   = `${progress} / 50`;
+    document.getElementById('feed-status').textContent  = `Captured ${progress} samples`;
+
+    // Once 50 samples done, stop sending frames; upload continues in background
+    if (progress >= 50) {
+      capturing = false;
+      clearInterval(frameInterval);
+      stopStream();
+      document.getElementById('feed-status').textContent = 'Uploading to Cloudinary...';
+    }
+  }).catch(() => {});
+}
+
+function stopStream() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+}
+
+function stopCapture() {
+  capturing = false;
+  clearInterval(frameInterval);
+  clearInterval(pollInterval);
+  stopStream();
+  fetch('/api/stop_capture', {method: 'POST'});
+  resetCamera();
+  showMsg('msg-box', false, 'Capture stopped.');
+  document.getElementById('train-btn').disabled  = false;
+  document.getElementById('train-btn').innerHTML = 'Train model';
+}
+
+function pollCaptureStatus() {
+  fetch('/api/capture_status').then(r => r.json()).then(data => {
+    // Still uploading — show progress, keep polling
+    if (data.uploading) {
+      const upPct = data.total > 0 ? Math.round((data.upload_progress / data.total) * 100) : 0;
+      document.getElementById('progress-bar').style.width   = upPct + '%';
+      document.getElementById('prog-badge').textContent     = `Uploading ${data.upload_progress} / ${data.total}`;
+      document.getElementById('progress-title').textContent = 'Uploading to Cloudinary';
+      document.getElementById('feed-status').textContent    = `Uploading ${data.upload_progress} / ${data.total}...`;
+      document.getElementById('train-btn').disabled         = true;
+      document.getElementById('train-btn').innerHTML        = `Uploading... ${upPct}%`;
+      return; // keep polling
+    }
+
+    // Not done yet and not uploading — still capturing, keep polling
+    if (!data.done) return;
+
+    // Done — clear poll and update UI
+    clearInterval(pollInterval);
+    resetCamera();
+    showMsg('msg-box', data.success, data.message);
+
+    if (data.success) {
+      ['enrollment','name','course','year','section'].forEach(id => {
+        document.getElementById(id).value = '';
+      });
+      document.getElementById('progress-bar').style.width = '100%';
+      loadRecentStudents();
+    }
+    document.getElementById('train-btn').disabled  = false;
+    document.getElementById('train-btn').innerHTML = 'Train model';
+    if (data.upload_done) showMsg('train-msg', true, 'Upload complete. Ready to train.');
+  });
+}
+
+function resetCamera() {
+  document.getElementById('start-btn').style.display      = 'flex';
+  document.getElementById('stop-btn').style.display       = 'none';
+  document.getElementById('cam-feed').src                 = '';
+  document.getElementById('cam-feed-wrap').style.display  = 'none';
+  document.getElementById('cam-placeholder').style.display = 'flex';
+  stopStream();
+}
+
+function trainModel() {
+  document.getElementById('train-btn').disabled  = true;
+  document.getElementById('train-btn').innerHTML = '<span class="spinner"></span> Training...';
+  document.getElementById('train-msg').innerHTML = '';
+  fetch('/api/train', {method: 'POST'}).then(r => r.json()).then(data => {
+    showMsg('train-msg', data.success, data.message);
+    document.getElementById('train-btn').disabled  = false;
+    document.getElementById('train-btn').innerHTML = 'Train model';
+  });
+}
+
+function loadRecentStudents() {
+  fetch('/api/students').then(r => r.json()).then(students => {
+    if (!Array.isArray(students) || !students.length) {
+      document.getElementById('recent-students').innerHTML =
+        '<div style="padding:20px;text-align:center;color:var(--hint);font-size:13px">No students yet</div>';
+      return;
+    }
+    let html = '<table><thead><tr><th>Enrollment</th><th>Name</th><th class="hide-mobile">Registered</th><th>Samples</th></tr></thead><tbody>';
+    students.slice(0,8).forEach(s => {
+      html += `<tr><td class="td-mono">${s.enrollmentNo}</td><td style="font-weight:500">${s.name}</td><td class="hide-mobile" style="color:var(--muted);font-size:12px">${s.registeredAt||'—'}</td><td class="td-mono">${s.sampleCount||'—'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('recent-students').innerHTML = html;
+  }).catch(() => {
+    document.getElementById('recent-students').innerHTML =
+      '<div style="padding:20px;text-align:center;color:var(--hint);font-size:13px">Could not load</div>';
+  });
+}
+loadRecentStudents();
+</script>
+{% endblock %}

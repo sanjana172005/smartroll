@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+{% block title %}Take Attendance — smartroll{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>Take attendance</h2>
+  <p>Live face recognition — select a class to begin</p>
+</div>
+<div class="page-body">
+
+  <div id="setup-panel">
+    <div style="margin-bottom:18px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Session setup</span></div>
+        <div class="card-body">
+          <div class="form-group">
+            <label class="form-label">Subject</label>
+            <select class="form-input" id="subject-sel" onchange="loadClassesForSubject()">
+              <option value="">Select subject...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Class session</label>
+            <select class="form-input" id="class-sel">
+              <option value="">Select subject first...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Duration</label>
+            <select class="form-input" id="duration-sel">
+              <option value="60">1 minute</option>
+              <option value="120">2 minutes</option>
+              <option value="180">3 minutes</option>
+              <option value="300">5 minutes</option>
+              <option value="600">10 minutes</option>
+              <option value="900">15 minutes</option>
+            </select>
+          </div>
+          <div id="setup-msg"></div>
+          <button class="btn btn-primary btn-lg btn-full" onclick="startAttendance()">
+            Start attendance session
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="live-panel" style="display:none">
+    <!-- Hidden browser webcam elements -->
+    <video id="att-video" style="display:none" autoplay playsinline muted></video>
+    <canvas id="att-canvas" style="display:none"></canvas>
+
+    <div class="att-layout">
+      <div>
+        <div class="video-container">
+          <!-- Annotated frames from server displayed here -->
+          <img id="video-feed" class="video-feed" src="" alt="Live feed"
+               style="width:100%;display:block;border-radius:var(--rl) var(--rl) 0 0">
+          <div class="video-overlay">
+            <div class="video-status">
+              <div class="pulse-dot"></div>
+              <span id="session-label">—</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="video-status" id="timer-display">—</span>
+              <button class="btn btn-danger btn-sm" onclick="stopSession()">Stop</button>
+            </div>
+          </div>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-fill" id="time-bar" style="width:100%"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Marked present</span>
+          <span class="badge badge-green" id="marked-count">0</span>
+        </div>
+        <div class="card-body">
+          <div id="marked-list" class="marked-list">
+            <p style="font-size:12px;color:var(--hint);text-align:center;padding:16px 0">
+              Faces will appear here
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="done-panel" style="display:none;margin-top:18px">
+      <div class="card">
+        <div class="card-body" style="text-align:center;padding:28px 20px">
+          <div class="badge badge-green" style="font-size:13px;padding:5px 14px;margin-bottom:10px">
+            Session complete
+          </div>
+          <p style="font-weight:500;font-size:15px;margin-bottom:4px" id="done-summary">—</p>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:18px">All records saved to MongoDB</p>
+          <div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap">
+            <a href="/admin" class="btn btn-secondary">View records</a>
+            <a id="export-link" href="#" class="btn btn-secondary">Export CSV</a>
+            <button class="btn btn-primary" onclick="resetSession()">New session</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let frameInterval     = null;
+let duration          = 60;
+let seen              = new Set();
+let currentClassId    = '';
+let currentSubject    = '';
+let currentClassLabel = '';
+let attStream         = null;
+let sessionActive     = false;
+
+// Load subjects
+fetch('/api/subjects').then(r => r.json()).then(subs => {
+  const sel = document.getElementById('subject-sel');
+  subs.forEach(s => sel.innerHTML += `<option value="${s._id}" data-name="${s.name}">${s.name}</option>`);
+
+  // Pre-fill from URL params (from Classes page)
+  const p = new URLSearchParams(window.location.search);
+  if (p.get('class_id')) {
+    currentClassId    = p.get('class_id');
+    currentSubject    = p.get('subject') || '';
+    currentClassLabel = p.get('class_label') || '';
+  }
+});
+
+function loadClassesForSubject() {
+  const sel       = document.getElementById('subject-sel');
+  const subjectId = sel.value;
+  document.getElementById('class-sel').innerHTML = '<option value="">Loading...</option>';
+
+  Promise.all([
+    fetch(`/api/classes?subject_id=${subjectId}`).then(r => r.json()),
+    fetch('/api/attendance').then(r => r.json())
+  ]).then(([classes, attendance]) => {
+    const takenClassIds = new Set(attendance.map(a => a.classId).filter(Boolean));
+    const available     = classes.filter(c => !takenClassIds.has(c._id));
+    const csel          = document.getElementById('class-sel');
+    if (!available.length) {
+      csel.innerHTML = '<option value="" disabled>No pending classes — all attendance taken</option>';
+      return;
+    }
+    csel.innerHTML = '<option value="">Select class...</option>';
+    available.forEach(c => {
+      csel.innerHTML += `<option value="${c._id}" data-subject="${c.subject}" data-label="${c.label}">${c.label}</option>`;
+    });
+  }).catch(() => {
+    document.getElementById('class-sel').innerHTML = '<option value="">Could not load classes</option>';
+  });
+}
+
+async function startAttendance() {
+  const csel       = document.getElementById('class-sel');
+  const subjectSel = document.getElementById('subject-sel');
+  duration         = parseInt(document.getElementById('duration-sel').value);
+
+  if (!currentClassId) {
+    if (!csel.value) { showMsg('setup-msg', 'error', 'Please select a class session.'); return; }
+    currentClassId    = csel.value;
+    currentSubject    = csel.options[csel.selectedIndex]?.dataset.subject
+                        || subjectSel.options[subjectSel.selectedIndex]?.dataset.name || '';
+    currentClassLabel = csel.options[csel.selectedIndex]?.dataset.label || '';
+  }
+
+  // Tell server to start session
+  await fetch('/api/start_session', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      subject: currentSubject, class_id: currentClassId,
+      class_label: currentClassLabel, duration
+    })
+  });
+
+  // Open browser webcam
+  try {
+    attStream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'user'}});
+  } catch(e) {
+    showMsg('setup-msg', 'error', 'Camera access denied. Please allow camera in your browser settings.');
+    return;
+  }
+
+  const video = document.getElementById('att-video');
+  video.srcObject = attStream;
+  await video.play();
+
+  document.getElementById('setup-panel').style.display = 'none';
+  document.getElementById('live-panel').style.display  = 'block';
+  document.getElementById('session-label').textContent = `${currentSubject} · ${currentClassLabel}`;
+
+  sessionActive = true;
+  frameInterval = setInterval(sendAttFrame, 400);
+}
+
+function sendAttFrame() {
+  if (!sessionActive) return;
+  const video  = document.getElementById('att-video');
+  const canvas = document.getElementById('att-canvas');
+  if (!video.videoWidth) return;
+
+  canvas.width  = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  const frameB64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+  fetch('/api/attendance_frame', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({frame: frameB64})
+  }).then(r => r.json()).then(data => {
+    if (data.frame) {
+      document.getElementById('video-feed').src = 'data:image/jpeg;base64,' + data.frame;
+    }
+
+    const status = data.status || {};
+    const remaining = status.remaining || 0;
+    document.getElementById('timer-display').textContent = remaining + 's';
+    document.getElementById('time-bar').style.width      = (remaining / duration * 100) + '%';
+
+    const marked = status.marked || [];
+    document.getElementById('marked-count').textContent  = marked.length;
+    marked.forEach(m => {
+      if (!seen.has(m.enrollment)) {
+        seen.add(m.enrollment);
+        const div     = document.createElement('div');
+        div.className = 'marked-item';
+        div.innerHTML = `<div class="marked-dot"></div><div style="flex:1;font-weight:500">${m.name}</div><div class="td-mono" style="color:var(--muted)">${m.enrollment}</div>`;
+        const list = document.getElementById('marked-list');
+        if (list.querySelector('p')) list.innerHTML = '';
+        list.prepend(div);
+      }
+    });
+
+    if (!status.active || remaining <= 0) {
+      sessionActive = false;
+      clearInterval(frameInterval);
+      stopAttStream();
+      showDone(status);
+    }
+  }).catch(() => {});
+}
+
+function stopAttStream() {
+  if (attStream) { attStream.getTracks().forEach(t => t.stop()); attStream = null; }
+}
+
+function showDone(data) {
+  document.getElementById('done-panel').style.display  = 'block';
+  document.getElementById('done-summary').textContent  = `${data.count || seen.size} student(s) marked present`;
+  document.getElementById('time-bar').style.width      = '0%';
+  document.getElementById('timer-display').textContent = 'Done';
+  document.getElementById('export-link').href          = `/api/export?class_id=${currentClassId}`;
+}
+
+function stopSession() {
+  sessionActive = false;
+  clearInterval(frameInterval);
+  stopAttStream();
+  fetch('/api/stop_session', {method: 'POST'}).then(() => showDone({count: seen.size}));
+}
+
+function resetSession() {
+  seen              = new Set();
+  currentClassId    = '';
+  currentSubject    = '';
+  currentClassLabel = '';
+  document.getElementById('live-panel').style.display  = 'none';
+  document.getElementById('done-panel').style.display  = 'none';
+  document.getElementById('setup-panel').style.display = 'block';
+  document.getElementById('video-feed').src            = '';
+  document.getElementById('marked-list').innerHTML     =
+    '<p style="font-size:12px;color:var(--hint);text-align:center;padding:16px 0">Faces will appear here</p>';
+  document.getElementById('marked-count').textContent  = '0';
+}
+
+function showMsg(id, type, text) {
+  document.getElementById(id).innerHTML =
+    `<div class="alert alert-${type === 'error' ? 'error' : 'success'}" style="margin-bottom:10px">${text}</div>`;
+}
+</script>
+{% endblock %}

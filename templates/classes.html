@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Classes — smartroll{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div class="page-header-row">
+    <div><h2>Classes</h2><p>Schedule and manage class sessions</p></div>
+    <button class="btn btn-primary" onclick="openModal('add-modal')">Schedule class</button>
+  </div>
+</div>
+<div class="page-body">
+  <div class="filter-row">
+    <select class="form-input" id="filter-subject" onchange="loadClasses()"><option value="">All subjects</option></select>
+    <input class="form-input" type="date" id="filter-date" onchange="loadClasses()">
+    <button class="btn btn-secondary btn-sm" onclick="clearFilters()">Clear</button>
+    <span id="class-count" style="font-size:12px;color:var(--muted)"></span>
+  </div>
+
+  <!-- Desktop table -->
+  <div class="card hide-on-mobile">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Subject</th><th>Date</th><th>Time</th><th>Room</th><th>Present</th><th>Absent</th><th style="text-align:right">Actions</th></tr></thead>
+        <tbody id="classes-tbody"><tr><td colspan="7"><div class="empty-state"><p>Loading...</p></div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Mobile card list -->
+  <div id="classes-mobile" class="mobile-card-list show-on-mobile"></div>
+</div>
+
+<div class="modal-backdrop" id="add-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3>Schedule a class</h3>
+    <div class="form-group"><label class="form-label">Subject *</label><select class="form-input" id="add-subject"><option value="">Select subject...</option></select></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Date *</label><input class="form-input" type="date" id="add-date"></div>
+      <div class="form-group"><label class="form-label">Room</label><input class="form-input" id="add-room" placeholder="e.g. Room 101"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Start time *</label><input class="form-input" type="time" id="add-from"></div>
+      <div class="form-group"><label class="form-label">End time *</label><input class="form-input" type="time" id="add-to"></div>
+    </div>
+    <div id="add-msg"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('add-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="addClass()">Create class</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="del-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3>Delete class?</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:6px" id="del-msg"></p>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('del-modal')">Cancel</button>
+      <button class="btn btn-danger" id="del-ok">Delete</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.hide-on-mobile{display:block}.show-on-mobile{display:none}
+@media(max-width:640px){.hide-on-mobile{display:none!important}.show-on-mobile{display:flex!important;flex-direction:column;gap:10px}}
+</style>
+<script>
+let subjects=[];
+function loadSubjects(){
+  fetch('/api/subjects').then(r=>r.json()).then(data=>{
+    subjects=data;
+    const sel=document.getElementById('filter-subject');
+    const sel2=document.getElementById('add-subject');
+    data.forEach(s=>{
+      sel.innerHTML+=`<option value="${s._id}">${s.name}</option>`;
+      sel2.innerHTML+=`<option value="${s._id}" data-name="${s.name}">${s.name}${s.code?' ('+s.code+')':''}</option>`;
+    });
+    const p=new URLSearchParams(window.location.search);
+    if(p.get('subject_id')) sel.value=p.get('subject_id');
+    loadClasses();
+  });
+}
+function loadClasses(){
+  const subjectId=document.getElementById('filter-subject').value;
+  const date=document.getElementById('filter-date').value;
+  let url='/api/classes?';
+  if(subjectId) url+=`subject_id=${subjectId}&`;
+  if(date) url+=`date=${date}&`;
+  fetch(url).then(r=>r.json()).then(data=>{
+    document.getElementById('class-count').textContent=data.length+' class(es)';
+
+    // Desktop table
+    const tbody=document.getElementById('classes-tbody');
+    if(!data.length){
+      tbody.innerHTML='<tr><td colspan="7"><div class="empty-state"><p>No classes found.</p></div></td></tr>';
+      document.getElementById('classes-mobile').innerHTML='<div class="empty-state"><p>No classes found.</p></div>';
+      return;
+    }
+    tbody.innerHTML=data.map(c=>`
+      <tr>
+        <td style="font-weight:500">${c.subject}</td>
+        <td class="td-mono">${c.date}</td>
+        <td class="td-mono">${c.timeFrom}–${c.timeTo}</td>
+        <td style="color:var(--muted)">${c.room||'—'}</td>
+        <td id="p-${c._id}"><span class="badge badge-gray">—</span></td>
+        <td id="a-${c._id}"><span class="badge badge-gray">—</span></td>
+        <td class="td-actions">
+          <a href="/attendance?class_id=${c._id}&subject=${encodeURIComponent(c.subject)}&class_label=${encodeURIComponent(c.label)}" class="btn btn-success btn-sm">Take</a>
+          <button class="btn btn-amber btn-sm" onclick="markAbsent('${c._id}','${esc(c.subject)}')">Absent</button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDel('${c._id}','${esc(c.subject)} ${c.date}')">Delete</button>
+        </td>
+      </tr>`).join('');
+
+    // Mobile cards
+    document.getElementById('classes-mobile').innerHTML=data.map(c=>`
+      <div class="mobile-record-card">
+        <div class="row"><span style="font-weight:500;font-size:14px">${c.subject}</span><span class="badge badge-blue">${c.date}</span></div>
+        <div class="row"><span class="label">Time</span><span class="td-mono" style="font-size:12px">${c.timeFrom}–${c.timeTo}</span></div>
+        <div class="row"><span class="label">Room</span><span>${c.room||'—'}</span></div>
+        <div class="row"><span class="label">Present</span><span id="pm-${c._id}">—</span></div>
+        <div class="actions">
+          <a href="/attendance?class_id=${c._id}&subject=${encodeURIComponent(c.subject)}&class_label=${encodeURIComponent(c.label)}" class="btn btn-success btn-sm" style="flex:1;justify-content:center">Take attendance</a>
+          <button class="btn btn-amber btn-sm" onclick="markAbsent('${c._id}','${esc(c.subject)}')">Mark absent</button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDel('${c._id}','${esc(c.subject)}')">Delete</button>
+        </div>
+      </div>`).join('');
+
+    data.forEach(c=>loadClassCounts(c._id));
+  });
+}
+function loadClassCounts(id){
+  fetch(`/api/attendance?class_id=${id}`).then(r=>r.json()).then(records=>{
+    const p=records.filter(r=>r.status==='present').length;
+    const a=records.filter(r=>r.status==='absent').length;
+    const pe=document.getElementById('p-'+id); if(pe) pe.innerHTML=`<span class="badge badge-green">${p}</span>`;
+    const ae=document.getElementById('a-'+id); if(ae) ae.innerHTML=a>0?`<span class="badge badge-red">${a}</span>`:`<span class="badge badge-gray">0</span>`;
+    const pm=document.getElementById('pm-'+id); if(pm) pm.innerHTML=`<span class="badge badge-green">${p}</span> <span class="badge badge-red">${a}</span>`;
+  });
+}
+function addClass(){
+  const sel=document.getElementById('add-subject');
+  const subjectId=sel.value;
+  const subject=sel.options[sel.selectedIndex]?.dataset.name||'';
+  const date=document.getElementById('add-date').value;
+  const timeFrom=document.getElementById('add-from').value;
+  const timeTo=document.getElementById('add-to').value;
+  const room=document.getElementById('add-room').value.trim();
+  if(!subjectId||!date||!timeFrom||!timeTo){showMsg('add-msg','error','Subject, date, start and end time are required.');return;}
+  fetch('/api/classes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject,subjectId,date,timeFrom,timeTo,room})})
+    .then(r=>r.json()).then(d=>{if(d.success){closeModal('add-modal');clearAddForm();loadClasses();}else showMsg('add-msg','error',d.message);});
+}
+function markAbsent(id,subject){
+  if(!confirm(`Mark all non-present students absent for ${subject}?`)) return;
+  fetch(`/api/classes/${id}/absent`,{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message);loadClasses();});
+}
+function confirmDel(id,label){
+  document.getElementById('del-msg').textContent=`Delete class "${label}"?`;
+  document.getElementById('del-ok').onclick=()=>fetch(`/api/classes/${id}`,{method:'DELETE'}).then(()=>{closeModal('del-modal');loadClasses();});
+  openModal('del-modal');
+}
+function clearFilters(){document.getElementById('filter-subject').value='';document.getElementById('filter-date').value='';loadClasses();}
+function clearAddForm(){['add-subject','add-date','add-from','add-to','add-room'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('add-msg').innerHTML='';}
+function esc(s){return s.replace(/'/g,"\\'");}
+function showMsg(id,t,text){document.getElementById(id).innerHTML=`<div class="alert alert-${t==='error'?'error':'success'}" style="margin-bottom:0">${text}</div>`;}
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+document.querySelectorAll('.modal-backdrop').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open');}));
+document.getElementById('add-date').value=new Date().toISOString().split('T')[0];
+loadSubjects();
+</script>
+{% endblock %}
